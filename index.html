@@ -1,0 +1,385 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Deriv Live Digit Analyzer — Signals</title>
+<style>
+:root{color-scheme:dark;--bg:#0b1220;--card:#142033;--panel:#0e192a;--line:#26364d;--muted:#9aa9bd;--text:#edf3fb;--green:#35c99a;--red:#ff7373;--yellow:#f4c86a;--blue:#7db5ff}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--text);font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;padding:18px}
+h1{font-size:25px;margin:8px 0}h2{font-size:19px;margin:0 0 12px}.sub{color:var(--muted);margin:0 0 18px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:18px;padding:18px;margin:14px 0}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}.row>*{flex:1}
+button,select,input{background:#263852;color:white;border:1px solid #3a4c65;border-radius:11px;padding:12px;font:inherit}
+button{font-weight:700;cursor:pointer}button:disabled{opacity:.45}
+.primary{background:#176e5b;border-color:#238c73}.danger{background:#56313a}
+.status{color:var(--green);font-weight:700}.muted{color:var(--muted)}.big{font-size:36px;font-weight:800;letter-spacing:.4px}
+.metrics{display:grid;grid-template-columns:repeat(3,1fr);gap:9px;margin-top:12px}
+.metric{background:var(--panel);padding:12px;border-radius:12px;min-width:0}.metric small{display:block;color:var(--muted)}.metric b{font-size:23px}
+.signal{border-left:5px solid var(--yellow);background:var(--panel);padding:14px;border-radius:12px}
+.signal.good{border-color:var(--green)}.signal.bad{border-color:var(--red)}
+.signal-title{font-size:23px;font-weight:800;margin:3px 0 8px}
+table{width:100%;border-collapse:collapse;font-size:14px}th,td{text-align:right;padding:9px 5px;border-bottom:1px solid var(--line)}th:first-child,td:first-child{text-align:left}
+.scroll{overflow:auto;max-height:300px}.pill{display:inline-block;border-radius:999px;padding:4px 9px;background:#263852;font-size:12px;font-weight:700}
+.note{font-size:13px;color:var(--muted)}.warning{color:var(--yellow)}.goodtext{color:var(--green)}.badtext{color:var(--red)}
+@media(max-width:440px){body{padding:12px}.metrics{grid-template-columns:repeat(3,1fr)}.metric{padding:9px}.metric b{font-size:20px}.big{font-size:31px}}
+</style>
+</head>
+<body>
+<h1>Deriv Live Digit Analyzer</h1>
+<p class="sub">Volatility 10 (1s) · Live market data · Analysis only — no trades are placed</p>
+
+<section class="card">
+  <div class="row">
+    <div><div id="status" class="status">Not connected</div><div class="muted" id="market">Market: Volatility 10 (1s)</div></div>
+    <button id="connect" class="primary">Connect live</button>
+    <button id="disconnect" class="danger" disabled>Disconnect</button>
+  </div>
+  <p class="note">Uses public market data only. No Deriv password, account token, or trading permission is requested.</p>
+</section>
+
+<section class="card">
+  <div class="muted">LATEST PRICE</div><div id="price" class="big">—</div>
+  <div class="metrics">
+    <div class="metric"><small>Last digit</small><b id="last">—</b></div>
+    <div class="metric"><small>2nd last</small><b id="second">—</b></div>
+    <div class="metric"><small>3rd last</small><b id="third">—</b></div>
+  </div>
+  <p id="movement" class="muted">Price movement: —</p>
+  <p class="muted">Ticks received: <b id="ticks">0</b> · Session sample: <b id="sample">0</b></p>
+</section>
+
+<section class="card">
+  <h2>Signal and entry-point monitor</h2>
+  <div id="signal" class="signal">
+    <span class="pill">WAIT</span>
+    <div class="signal-title">Collecting data</div>
+    <div class="muted">No setup is evaluated until enough ticks have been collected.</div>
+  </div>
+  <p class="note warning" id="signalNote">This is a statistical screening rule, not a prediction. A signal does not mean the next digit will follow it.</p>
+  <div class="metrics">
+    <div class="metric"><small>Window A</small><b id="windowA">0 / 500</b></div>
+    <div class="metric"><small>Window B</small><b id="windowB">0 / 500</b></div>
+    <div class="metric"><small>Last signal</small><b id="signalCount">—</b></div>
+  </div>
+</section>
+
+<section class="card">
+  <h2>Last-digit frequency</h2>
+  <p class="note">Counts and percentages for the latest 500 ticks.</p>
+  <div class="scroll"><table><thead><tr><th>Digit</th><th>Count</th><th>Frequency</th></tr></thead><tbody id="freq"></tbody></table></div>
+</section>
+
+<section class="card">
+  <h2>Previous digit → next digit</h2>
+  <p class="note">Transition counts from the latest 500 ticks. These are descriptive, not predictive.</p>
+  <div class="scroll"><table><thead><tr><th>Previous</th><th>Next digit</th><th>Count</th><th>Share</th></tr></thead><tbody id="trans"></tbody></table></div>
+</section>
+
+<section class="card">
+  <h2>Recent ticks</h2>
+  <div class="scroll"><table><thead><tr><th>#</th><th>Price</th><th>Last digit</th><th>Move</th></tr></thead><tbody id="recent"></tbody></table></div>
+</section>
+
+
+<section class="card">
+  <h2>Automated trading controls</h2>
+  <p class="note warning">Automation is OFF by default. This feature can place real orders if you deliberately connect a real account, confirm the risk warning, and turn it on. Never paste your Deriv password here.</p>
+  <label class="note" for="mode">Account mode</label>
+  <select id="mode" style="width:100%;margin:6px 0 12px">
+    <option value="demo" selected>Demo account — recommended for testing</option>
+    <option value="real">Real account — real money at risk</option>
+  </select>
+  <label class="note" for="token">Deriv API personal access token (trade permission)</label>
+  <input id="token" type="password" autocomplete="off" placeholder="Paste your own API token" style="width:100%;margin:6px 0 12px">
+  <label class="note" for="appid">Deriv App ID</label>
+  <input id="appid" inputmode="numeric" placeholder="Your registered Deriv App ID" style="width:100%;margin:6px 0 12px">
+  <label class="note" for="accountid">Options account ID</label>
+  <input id="accountid" placeholder="Demo or real Options account ID" style="width:100%;margin:6px 0 12px">
+  <label class="note" for="currency">Account currency</label>
+  <input id="currency" value="USD" maxlength="10" style="width:100%;margin:6px 0 12px">
+  <div class="metrics">
+    <div class="metric"><small>Stake per trade</small><input id="stake" type="number" min="0.35" max="0.35" step="0.01" value="0.35" style="width:100%;padding:8px"></div>
+    <div class="metric"><small>Daily loss stop</small><input id="lossstop" type="number" min="0.35" max="1" step="0.05" value="1.00" style="width:100%;padding:8px"></div>
+    <div class="metric"><small>Max trades/day</small><input id="maxtrades" type="number" min="1" max="3" step="1" value="3" style="width:100%;padding:8px"></div>
+  </div>
+  <p class="note">Safety caps in this build: stake is fixed at 0.35 account-currency units, maximum 3 trades per session, daily loss stop capped at 1.00, and automation stops after 2 consecutive losses. No martingale or stake recovery.</p>
+  <div id="liveConfirmWrap" style="display:none;background:#291c22;border:1px solid #70404a;border-radius:12px;padding:12px;margin:12px 0">
+    <label class="row" style="align-items:center"><input id="liveConfirm" type="checkbox" style="width:auto"> <span>I understand real trades can lose money.</span></label>
+    <label class="note" for="livePhrase">Type exactly: ENABLE REAL TRADING</label>
+    <input id="livePhrase" placeholder="ENABLE REAL TRADING" style="width:100%;margin-top:6px">
+  </div>
+  <div class="row" style="margin-top:12px">
+    <button id="authBtn" class="primary">Connect account</button>
+    <button id="autoBtn" disabled>Start automation</button>
+  </div>
+  <div class="row" style="margin-top:8px">
+    <button id="stopAuto" class="danger" disabled>STOP AUTOMATION</button>
+    <button id="clearAuth">Clear credentials</button>
+  </div>
+  <p id="tradeStatus" class="muted">Trading account not connected.</p>
+  <div class="metrics">
+    <div class="metric"><small>Trades this session</small><b id="tradeCount">0</b></div>
+    <div class="metric"><small>Session P/L</small><b id="sessionPL">0.00</b></div>
+    <div class="metric"><small>Loss streak</small><b id="lossStreak">0</b></div>
+  </div>
+  <p class="note">Credentials stay in this page's memory and are not saved by this file. Do not use a shared/public phone. Disconnect and clear credentials when finished. For safer access, use Deriv OAuth in a properly hosted app rather than sharing a permanent token.</p>
+</section>
+
+<section class="card">
+  <h2>How the signal rule works</h2>
+  <ul class="note">
+    <li>Waits for 1,000 ticks and compares two separate 500-tick windows.</li>
+    <li>Looks for the same Over/Under barrier to show an observed frequency at least 5 percentage points above its theoretical baseline in both windows.</li>
+    <li>If no barrier passes, it displays WAIT — no entry.</li>
+    <li>Even a qualifying result can be random and may stop working. Test on demo first; never treat it as guaranteed profit.</li>
+  </ul>
+</section>
+
+<script>
+(() => {
+  const $ = id => document.getElementById(id);
+  const SYMBOL = "1HZ10V";
+  let ws = null, all = [], total = 0, previousPrice = null, lastSignal = "—";
+  let tradeWs=null, authToken="", appId="", accountId="", currency="USD", accountMode="demo";
+  let automation=false, tradeBusy=false, activeContractId=null, tradesToday=0, sessionPL=0, lossStreak=0;
+  let lastAutoTradeTick=-100000, sessionDay=new Date().toDateString();
+  const maxKeep = 5000;
+  function digits(q, pip) {
+    const places = Math.max(0, Number(pip) || 0);
+    const s = Number(q).toFixed(places);
+    const z = s.replace(".", "");
+    return {s, last:Number(z.slice(-1)), second:Number(z.slice(-2,-1)), third:Number(z.slice(-3,-2))};
+  }
+  function addTick(t) {
+    if (!t || t.quote === undefined) return;
+    const d = digits(t.quote, t.pip_size);
+    const price = Number(t.quote);
+    const move = previousPrice === null ? 0 : price - previousPrice;
+    previousPrice = price;
+    const item = {price:d.s, digit:d.last, move};
+    all.push(item); if (all.length > maxKeep) all.shift();
+    total++;
+    $("price").textContent = d.s;
+    $("last").textContent = d.last;
+    $("second").textContent = d.second;
+    $("third").textContent = d.third;
+    $("movement").textContent = "Price movement: " + (move >= 0 ? "+" : "") + move.toFixed(Math.max(2, Number(t.pip_size)||2)) + (move > 0 ? " (up)" : move < 0 ? " (down)" : " (unchanged)");
+    $("ticks").textContent = total;
+    $("sample").textContent = all.length;
+    render();
+  }
+  function wilsonLower(success, n) {
+    if (!n) return 0;
+    const z=1.96, p=success/n, den=1+z*z/n;
+    return (p+z*z/(2*n)-z*Math.sqrt((p*(1-p)+z*z/(4*n))/n))/den;
+  }
+  function findSignal(a,b) {
+    if (a.length < 500 || b.length < 500) return null;
+    const options=[];
+    for(let barrier=0; barrier<=8; barrier++){
+      for(const side of ["OVER","UNDER"]){
+        const baseline = side==="OVER" ? (9-barrier)/10 : barrier/10;
+        if (baseline<=0 || baseline>=1) continue;
+        const count = arr => arr.filter(x=> side==="OVER" ? x.digit>barrier : x.digit<barrier).length;
+        const ca=count(a), cb=count(b), pa=ca/500, pb=cb/500;
+        // Both independent windows must exceed baseline by 5 percentage points.
+        if(pa >= baseline+0.05 && pb >= baseline+0.05 && wilsonLower(ca,500)>baseline && wilsonLower(cb,500)>baseline){
+          options.push({side,barrier,baseline,pa,pb,score:Math.min(pa-baseline,pb-baseline)});
+        }
+      }
+    }
+    options.sort((x,y)=>y.score-x.score);
+    return options[0] || null;
+  }
+
+  const tradeStatus = msg => { $("tradeStatus").textContent=msg; };
+  function setAutomation(on) {
+    automation=on;
+    $("autoBtn").textContent=on?"Automation ON":"Start automation";
+    $("autoBtn").disabled=!tradeWs || tradeWs.readyState!==WebSocket.OPEN || on;
+    $("stopAuto").disabled=!on;
+    if(!on) tradeBusy=false;
+  }
+  async function connectTrading() {
+    const token=$("token").value.trim(), aid=$("appid").value.trim(), acc=$("accountid").value.trim();
+    const mode=$("mode").value, cur=$("currency").value.trim().toUpperCase();
+    if(!token || !aid || !acc || !cur){tradeStatus("Enter your API token, App ID, account ID and currency.");return;}
+    setAutomation(false);
+    if(tradeWs){try{tradeWs.close()}catch{} tradeWs=null;}
+    authToken=token; appId=aid; accountId=acc; currency=cur; accountMode=mode;
+    tradeStatus("Requesting secure one-time connection…");
+    try {
+      const response=await fetch("https://api.derivws.com/trading/v1/options/accounts/"+encodeURIComponent(acc)+"/otp",{
+        method:"POST",
+        headers:{"Authorization":"Bearer "+token,"Deriv-App-ID":aid}
+      });
+      const body=await response.json();
+      if(!response.ok) throw new Error(body?.errors?.[0]?.message || body?.error?.message || "OTP request failed ("+response.status+")");
+      const url=body?.data?.url;
+      if(!url) throw new Error("Deriv did not return a WebSocket URL. Check account ID and API permissions.");
+      if(mode==="demo" && !url.includes("/ws/demo")) throw new Error("The selected account did not authenticate as a demo account. Check its account ID.");
+      if(mode==="real" && !url.includes("/ws/real")) throw new Error("The selected account did not authenticate as a real account. Check its account ID.");
+      tradeWs=new WebSocket(url);
+      tradeWs.onopen=()=>{
+        tradeStatus("Connected to "+mode.toUpperCase()+" account. Automation remains OFF.");
+        $("autoBtn").disabled=false;
+      };
+      tradeWs.onmessage=e=>{
+        let d;try{d=JSON.parse(e.data)}catch{return}
+        if(d.error){tradeStatus("Deriv: "+d.error.message);tradeBusy=false;return;}
+        if(d.msg_type==="proposal" && d.echo_req?.req_id===501){
+          if(!automation){tradeBusy=false;return;}
+          const proposal=d.proposal;
+          if(!proposal?.id || !Number.isFinite(Number(proposal.ask_price))){tradeStatus("No valid price proposal; trade skipped.");tradeBusy=false;return;}
+          tradeStatus("Proposal received. Sending one capped order…");
+          tradeWs.send(JSON.stringify({buy:proposal.id,price:Number(proposal.ask_price),req_id:502}));
+        }
+        if(d.msg_type==="buy" && d.echo_req?.req_id===502){
+          const id=d.buy?.contract_id;
+          if(!id){tradeStatus("Buy response did not include a contract ID.");tradeBusy=false;return;}
+          activeContractId=id;
+          tradeStatus("Order placed. Monitoring contract #"+id+".");
+          tradeWs.send(JSON.stringify({proposal_open_contract:1,contract_id:id,subscribe:1,req_id:503}));
+        }
+        if(d.msg_type==="proposal_open_contract" && d.proposal_open_contract){
+          const c=d.proposal_open_contract;
+          if((c.is_sold || c.status==="sold" || c.is_expired) && activeContractId!==null && String(c.contract_id)===String(activeContractId)){
+            const profit=Number(c.profit)||0;
+            sessionPL+=profit; tradesToday++;
+            lossStreak=profit<0?lossStreak+1:profit>0?0:lossStreak;
+            $("tradeCount").textContent=tradesToday;
+            $("sessionPL").textContent=sessionPL.toFixed(2);
+            $("lossStreak").textContent=lossStreak;
+            tradeStatus("Contract settled. Result: "+(profit>=0?"+":"")+profit.toFixed(2)+" "+currency+".");
+            activeContractId=null;tradeBusy=false;
+            enforceStops();
+          }
+        }
+      };
+      tradeWs.onerror=()=>tradeStatus("Trading connection error. Automation stopped.");
+      tradeWs.onclose=()=>{setAutomation(false);tradeStatus("Trading account disconnected.");};
+    } catch(err){tradeStatus("Connection failed: "+err.message);authToken="";}
+  }
+  function enforceStops(){
+    const maxTrades=Math.min(3,Math.max(1,Number($("maxtrades").value)||3));
+    const lossLimit=Math.min(1,Math.max(.35,Number($("lossstop").value)||1));
+    if(tradesToday>=maxTrades){setAutomation(false);tradeStatus("Safety stop: session trade limit reached.");}
+    if(sessionPL<=-lossLimit){setAutomation(false);tradeStatus("Safety stop: daily loss limit reached.");}
+    if(lossStreak>=2){setAutomation(false);tradeStatus("Safety stop: 2 consecutive losses.");}
+  }
+  function maybeAutoTrade(sig){
+    if(!automation || !tradeWs || tradeWs.readyState!==WebSocket.OPEN || tradeBusy || activeContractId) return;
+    if(tradesToday>=Math.min(3,Math.max(1,Number($("maxtrades").value)||3))) return;
+    if(total-lastAutoTradeTick<60) return;
+    if(sessionPL<=-Math.min(1,Math.max(.35,Number($("lossstop").value)||1)) || lossStreak>=2){enforceStops();return;}
+    const stake=Number($("stake").value);
+    if(!Number.isFinite(stake) || Math.abs(stake-.35)>.000001){tradeStatus("Safety lock: this build allows a fixed 0.35 stake only.");setAutomation(false);return;}
+    if(accountMode==="real" && (! $("liveConfirm").checked || $("livePhrase").value.trim()!=="ENABLE REAL TRADING")){
+      tradeStatus("Real-money safety confirmation missing. Automation paused.");setAutomation(false);return;
+    }
+    tradeBusy=true;lastAutoTradeTick=total;
+    tradeStatus("Requesting a "+sig.side+" "+sig.barrier+" price proposal…");
+    tradeWs.send(JSON.stringify({
+      proposal:1,amount:stake,basis:"stake",
+      contract_type:sig.side==="OVER"?"DIGITOVER":"DIGITUNDER",
+      currency:currency,duration:1,duration_unit:"t",
+      barrier:String(sig.barrier),underlying_symbol:SYMBOL,req_id:501
+    }));
+  }
+  function resetSessionIfNewDay(){
+    const today=new Date().toDateString();
+    if(today!==sessionDay){sessionDay=today;tradesToday=0;sessionPL=0;lossStreak=0;$("tradeCount").textContent="0";$("sessionPL").textContent="0.00";$("lossStreak").textContent="0";}
+  }
+
+  function render() {
+    resetSessionIfNewDay();
+    const recent=all.slice(-500), n=recent.length;
+    $("windowA").textContent = Math.min(500, Math.max(0,all.length-500)) + " / 500";
+    $("windowB").textContent = Math.min(500, all.length) + " / 500";
+    const counts=Array(10).fill(0);
+    recent.forEach(x=>counts[x.digit]++);
+    $("freq").innerHTML=counts.map((c,i)=>`<tr><td>${i}</td><td>${c}</td><td>${n?(100*c/n).toFixed(2):"0.00"}%</td></tr>`).join("");
+    const transitions=Array.from({length:10},()=>Array(10).fill(0));
+    for(let i=1;i<recent.length;i++) transitions[recent[i-1].digit][recent[i].digit]++;
+    let rows="";
+    for(let p=0;p<10;p++){
+      const totalFrom=transitions[p].reduce((x,y)=>x+y,0);
+      let best=0; for(let d=1;d<10;d++) if(transitions[p][d]>transitions[p][best]) best=d;
+      rows+=`<tr><td>${p}</td><td>${totalFrom?best:"—"}</td><td>${totalFrom?transitions[p][best]:"0"}</td><td>${totalFrom?(100*transitions[p][best]/totalFrom).toFixed(1):"0.0"}%</td></tr>`;
+    }
+    $("trans").innerHTML=rows;
+    $("recent").innerHTML=all.slice(-20).reverse().map((x,i)=>`<tr><td>${total-i}</td><td>${x.price}</td><td>${x.digit}</td><td>${x.move>0?"↑":x.move<0?"↓":"–"}</td></tr>`).join("");
+    const a=all.slice(-1000,-500), b=all.slice(-500);
+    const sig=findSignal(a,b);
+    const panel=$("signal");
+    if(all.length<1000){
+      panel.className="signal";
+      panel.innerHTML=`<span class="pill">WAIT</span><div class="signal-title">Collecting data</div><div class="muted">Need ${1000-all.length} more ticks before the first two-window check.</div>`;
+      $("signalCount").textContent="—";
+    } else if(sig){
+      panel.className="signal good";
+      const base=(sig.baseline*100).toFixed(0);
+      panel.innerHTML=`<span class="pill">RESEARCH SETUP</span><div class="signal-title">${sig.side} ${sig.barrier}</div><div>Observed frequency: ${ (sig.pa*100).toFixed(1) }% in window A and ${(sig.pb*100).toFixed(1)}% in window B.</div><div class="muted">Baseline reference: ${base}% · Screening threshold: baseline + 5 percentage points in both windows.</div><div class="warning" style="margin-top:8px">Entry status: DEMO OBSERVATION ONLY — not a live trade instruction.</div>`;
+      lastSignal=sig.side+" "+sig.barrier; $("signalCount").textContent=lastSignal;
+      maybeAutoTrade(sig);
+    } else {
+      panel.className="signal bad";
+      panel.innerHTML=`<span class="pill">WAIT</span><div class="signal-title">No qualifying setup</div><div class="muted">No Over/Under barrier passed the two-window screening rule. Do not force an entry.</div>`;
+      $("signalCount").textContent="WAIT";
+    }
+  }
+  function connect(){
+    if(ws && ws.readyState===WebSocket.OPEN) return;
+    $("status").textContent="Connecting…";
+    $("connect").disabled=true;
+    try {
+      ws=new WebSocket("wss://api.derivws.com/trading/v1/options/ws/public");
+      ws.onopen=()=>{
+        $("status").textContent="Connected — subscribing…";
+        ws.send(JSON.stringify({ticks:SYMBOL,subscribe:1,req_id:2}));
+      };
+      ws.onmessage=e=>{
+        let d; try{d=JSON.parse(e.data)}catch{return}
+        if(d.error){$("status").textContent="Deriv error: "+d.error.message;$("connect").disabled=false;return}
+        if(d.msg_type==="tick"){
+          addTick(d.tick);
+          $("status").textContent="Live — receiving ticks";
+          $("disconnect").disabled=false;
+        }
+      };
+      ws.onerror=()=>{$("status").textContent="Connection error";$("connect").disabled=false};
+      ws.onclose=()=>{$("status").textContent="Disconnected";$("connect").disabled=false;$("disconnect").disabled=true};
+    } catch(e){$("status").textContent="Could not connect";$("connect").disabled=false}
+  }
+  function disconnect(){if(ws){ws.close();ws=null} $("status").textContent="Disconnected";$("connect").disabled=false;$("disconnect").disabled=true}
+  $("connect").addEventListener("click",connect);
+  $("disconnect").addEventListener("click",disconnect);
+  $("mode").addEventListener("change",()=>{
+    $("liveConfirmWrap").style.display=$("mode").value==="real"?"block":"none";
+    if(tradeWs){tradeWs.close();tradeWs=null;}
+    setAutomation(false);
+    tradeStatus("Mode changed. Connect the selected account again.");
+  });
+  $("authBtn").addEventListener("click",connectTrading);
+  $("autoBtn").addEventListener("click",()=>{
+    if(accountMode==="real" && (!$("liveConfirm").checked || $("livePhrase").value.trim()!=="ENABLE REAL TRADING")){
+      tradeStatus("To enable real trading, tick the warning and type ENABLE REAL TRADING exactly.");return;
+    }
+    if(!tradeWs || tradeWs.readyState!==WebSocket.OPEN){tradeStatus("Connect the selected Deriv account first.");return;}
+    setAutomation(true);
+    tradeStatus("Automation is ON. It will only act if the signal screen produces a qualifying setup.");
+  });
+  $("stopAuto").addEventListener("click",()=>{setAutomation(false);tradeStatus("Automation stopped. Any open contract continues until settlement.");});
+  $("clearAuth").addEventListener("click",()=>{
+    setAutomation(false);if(tradeWs){tradeWs.close();tradeWs=null;}
+    authToken="";appId="";accountId="";
+    $("token").value="";$("appid").value="";$("accountid").value="";
+    tradeStatus("Disconnected. Credentials cleared from this page.");
+  });
+  $("liveConfirmWrap").style.display="none";
+  render();
+})();
+</script>
+</body>
+</html>
